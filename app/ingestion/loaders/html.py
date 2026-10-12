@@ -18,13 +18,12 @@ def parse_html(file_path: str):
             for script in soup(["script", "style", "meta", "noscript"]):
                 script.decompose()
 
-            # 2. Extract Text
-            text = soup.get_text(separator="\n")
+            # 2. Extract Text with paragraph separation
+            text = soup.get_text(separator="\n\n")
 
-            # 3. Clean Whitespace (Collapse multiple newlines)
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text_clean = "\n".join(chunk for chunk in chunks if chunk)
+            # 3. Clean Whitespace (Collapse empty lines while preserving paragraphs)
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+            text_clean = "\n\n".join(paragraphs)
 
             return text_clean
         except Exception as e:

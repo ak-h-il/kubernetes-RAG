@@ -13,7 +13,7 @@ def parse_office(file_path: str):
             if lower.endswith(".docx"):
                 from docx import Document
                 doc = Document(file_path)
-                full_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                full_text = "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip())
 
             elif lower.endswith(".pptx"):
                 from pptx import Presentation
@@ -23,7 +23,7 @@ def parse_office(file_path: str):
                     for shape in slide.shapes:
                         if hasattr(shape, "text") and shape.text.strip():
                             parts.append(shape.text.strip())
-                full_text = "\n".join(parts)
+                full_text = "\n\n".join(parts)
 
             else:
                 raise ValueError(f"Unsupported Office format: {file_path}")
