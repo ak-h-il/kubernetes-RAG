@@ -1,0 +1,38 @@
+# ========================
+# SECRETS — NEVER COMMIT
+# ========================
+.env
+.env.*
+!.env.example
+
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ========================
+# Data & Processed Files
+# ========================
+
+
+# ========================
+# IDE & OS
+# ========================
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# ========================
+# Logs
+# ========================
+*.log
+logfire_credentials.json
