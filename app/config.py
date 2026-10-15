@@ -15,6 +15,10 @@ class Settings:
     LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
     LOGFIRE_BASE_URL = os.getenv("LOGFIRE_BASE_URL")
 
+    PORTKEY_API_KEY = os.getenv("PORTKEY_API_KEY")
+    GROQ_SLUG =  "first-key"    # primary: @rag/llama-3.3-70b-versatile
+    GROQ_SLUG_2 = "second-key"  # fallback: @brag/llama-3.1-8b-instant
+
 
 
 
