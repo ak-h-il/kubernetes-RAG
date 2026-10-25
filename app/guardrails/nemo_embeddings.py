@@ -55,21 +55,35 @@ def _colang_hash(colang_content: str) -> str:
     return hashlib.md5(colang_content.encode()).hexdigest()
 
 
-def _load_cache(expected_hash: str) -> List[List[float]] | None:
-    """Return cached vectors if hash matches, else None."""
+def _load_cache(expected_hash: str, expected_count: int) -> List[List[float]] | None:
+    """Return cached vectors if hash AND document count match, else None.
+
+    The count check is critical: NeMo calls encode() separately for the
+    user-message index AND the flows index, each with a different number of
+    documents.  Returning a cached vector list whose length differs from the
+    number of IndexItems causes BasicEmbeddingsIndex._index to have more rows
+    than _items, producing an IndexError on every search.
+    """
     if not _CACHE_PATH.exists():
         return None
     try:
         with _CACHE_PATH.open("rb") as f:
             data = pickle.load(f)
-        if data.get("hash") == expected_hash:
+        if data.get("hash") == expected_hash and len(data.get("vectors", [])) == expected_count:
             logfire.info(
                 "NeMo colang index loaded from disk cache",
                 path=str(_CACHE_PATH),
                 sentences=len(data["vectors"]),
             )
             return data["vectors"]
-        logfire.info("NeMo colang cache stale (colang_rules.py changed) — re-embedding.")
+        if data.get("hash") != expected_hash:
+            logfire.info("NeMo colang cache stale (colang_rules.py changed) — re-embedding.")
+        else:
+            logfire.info(
+                "NeMo colang cache size mismatch (flows vs user-message index) — re-embedding.",
+                cached=len(data.get("vectors", [])),
+                expected=expected_count,
+            )
     except Exception as e:
         logfire.warning("NeMo colang cache corrupt — re-embedding.", error=str(e))
     return None
@@ -154,7 +168,9 @@ class ThrottledGeminiEmbeddingModel(EmbeddingModel):
             return [vec]
 
         # Index-build path: check disk cache first.
-        cached = _load_cache(self._colang_hash)
+        # Pass the document count so we reject cache entries built for a
+        # different index (e.g. user-message cache returned for flows index).
+        cached = _load_cache(self._colang_hash, expected_count=len(documents))
         if cached is not None:
             if cached:
                 self._embedding_size = len(cached[0])

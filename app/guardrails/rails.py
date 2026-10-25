@@ -5,6 +5,7 @@ from nemoguardrails.embeddings.providers import register_embedding_provider
 
 from app.guardrails.colang_rules import COLANG_CONTENT, YAML_CONTENT, RAIL_INDICATORS
 from app.guardrails.nemo_embeddings import ThrottledGeminiEmbeddingModel, _colang_hash
+from app.guardrails.embedding_guard import build_guard_index, guard_by_embedding
 from app.gateway.client import get_langchain_llm
 
 
@@ -13,46 +14,37 @@ _rails: LLMRails | None = None
 
 def initialize_rails() -> None:
     """
-    Build the NeMo LLMRails singleton at app startup.
+    Build the guardrail system at app startup.
 
-    LLM:        ChatGroq llama-3.1-8b-instant  (fast intent classification)
-    Embeddings: ThrottledGeminiEmbeddingModel   (engine="throttled_gemini")
-                - Reuses app Gemini embeddings (no new downloads)
-                - Throttled to 0.7s/sentence to avoid 429 rate limits
-                - Results cached to disk; only re-embeds when colang_rules.py
-                  changes (detected via MD5 hash)
+    PRIMARY gate:  embedding_guard.py
+        Pure cosine-similarity check against embedded user-message examples.
+        No LLM call. Deterministic. Fast (~200 ms — one embed_query call).
+        Vectors cached to disk; only re-embeds when colang_rules.py changes.
 
-    The heavier llama-3.3-70b-versatile is reserved for the RAG pipeline.
+    FALLBACK gate: NeMo LLMRails (kept for future extensibility)
+        Only reached if the embedding gate passes. NeMo is NOT used for
+        intent classification (its single-call LLM path ignores colang rules
+        in practice). It is initialised here but guard() calls the embedding
+        gate first and short-circuits before _rails.generate() is ever called
+        for blocked intents.
     """
     global _rails
 
-    # --- 1. Register custom embeddings BEFORE building config ---------------
-    #   This adds "throttled_gemini" to NeMo's EmbeddingProviderRegistry so
-    #   BasicEmbeddingsIndex can find it when the config specifies
-    #   engine="throttled_gemini".
+    # --- 1. Build pure-embedding guard index --------------------------------
+    #   Embeds all USER_INTENTS examples once, caches to guard_index.pkl.
+    #   Subsequent startups load from cache in ~0.05 s.
+    build_guard_index()
+
+    # --- 2. Register custom embeddings for NeMo (kept for fallback) ---------
     register_embedding_provider(ThrottledGeminiEmbeddingModel)
 
-    # --- 2. Guard LLM (via Portkey gateway — same path that works for RAG) ---
-    #   Direct ChatGroq calls fail with 404 (GROQ_API_KEY is routed through
-    #   Portkey, not used for direct Groq API access). get_langchain_llm()
-    #   returns a ChatOpenAI pointed at PORTKEY_GATEWAY_URL which is confirmed
-    #   working for the main RAG pipeline.
+    # --- 3. Build NeMo config -----------------------------------------------
     guard_llm = get_langchain_llm(feature="guardrails")
-
-    # --- 3. Build NeMo config from Colang + YAML strings --------------------
     config = RailsConfig.from_content(
         colang_content=COLANG_CONTENT,
         yaml_content=YAML_CONTENT,
     )
 
-    # --- 4. Inject embeddings model into config.models ----------------------
-    #   LLMRails.__init__ scans config.models for type="embeddings" and sets
-    #   _default_embedding_engine = model.engine and
-    #   _default_embedding_params = model.parameters.
-    #   BasicEmbeddingsIndex then calls init_embedding_model("throttled_gemini")
-    #   which looks up ThrottledGeminiEmbeddingModel from the registry and
-    #   instantiates it, passing colang_hash as a keyword arg so the disk
-    #   cache can detect when colang_rules.py has changed.
     ch = _colang_hash(COLANG_CONTENT)
     config.models.append(
         Model(
@@ -63,36 +55,32 @@ def initialize_rails() -> None:
         )
     )
 
-    # --- 5. Build rails -----------------------------------------------------
     _rails = LLMRails(config, llm=guard_llm)
 
-    logfire.info("NeMo Guardrails initialised (Portkey/llama-3.3-70b-versatile + throttled Gemini embeddings)")
+    logfire.info("Guardrails initialised (embedding gate + NeMo fallback)")
 
 
 def guard(message: str) -> tuple[bool, str | None]:
     """
-    Run a user message through the NeMo rails gate.
+    Run a user message through the guardrail gate.
+
+    Step 1 — Pure embedding similarity (no LLM):
+        Embeds the message, compares against all USER_INTENTS examples.
+        If cosine similarity >= SIMILARITY_THRESHOLD, returns the predefined
+        BOT_RESPONSES string immediately.
+
+    Step 2 — NeMo LLMRails (fallback, currently not reached for blocked intents):
+        Only runs if the embedding gate passes. Kept for extensibility.
 
     Returns:
-        (True,  rail_response) -- a rail fired; return this response immediately,
-                                  skip the RAG pipeline entirely.
-        (False, None)          -- message is clean; proceed to LangGraph.
+        (True,  response) -- intent matched; return response, skip RAG.
+        (False, None)     -- message is clean; proceed to LangGraph.
     """
-    if _rails is None:
-        logfire.warning("Guardrails not initialised -- skipping gate.")
-        return False, None
+    # --- Step 1: fast embedding gate ----------------------------------------
+    fired, response = guard_by_embedding(message)
+    if fired:
+        logfire.info("Guardrails fired (embedding gate)", query=message[:80])
+        return True, response
 
-    with logfire.span("Guardrails Check"):
-        result = _rails.generate(messages=[{"role": "user", "content": message}])
-
-        # NeMo returns {'role': 'assistant', 'content': '...'} -- extract text.
-        content = result.get("content", "") if isinstance(result, dict) else str(result)
-
-        fired = any(indicator in content for indicator in RAIL_INDICATORS)
-
-        if fired:
-            logfire.info("Guardrails fired", query=message[:80])
-            return True, content
-
-        logfire.info("Guardrails passed")
-        return False, None
+    logfire.info("Guardrails passed")
+    return False, None
