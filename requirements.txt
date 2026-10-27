@@ -14,7 +14,8 @@ nest-asyncio                # Support for nested async loops in notebooks/stream
 
 # --- JINA API EMBEDDINGS + LOCAL FALLBACK ---
 sentence-transformers       # Local fallback embeddings (mxbai-embed-large-v1)
-torch                        # Required by sentence-transformers
+torch<=2.5.1                # PyTorch (pinned for Windows DLL compatibility)
+huggingface-hub<2.0          # Required by transformers dependency check
 
 # --- VECTOR DB & RETRIEVAL ---
 qdrant-client               # Vector Database for semantic search
@@ -24,7 +25,7 @@ flashrank                   # Lightweight local cross-encoder reranking
 langchain                   # Core LLM orchestration
 langgraph                   # State-machine logic for cyclic agent flows
 langchain-google-vertexai   # Required shim for NeMo Guardrails internal import (no GCP credentials needed)
-langchain-community         # Community-contributed tools and loaders
+langchain-community<0.4.0   # Community-contributed tools and loaders (pinned <0.4.0 for ragas compatibility)
 langchain-openai            # OpenAI-compatible layer (used by Portkey gateway + guardrails)
 pydantic>=2.0.0             # Data validation and settings management
 pydantic-settings           # Pydantic BaseSettings with dotenv support
@@ -67,6 +68,8 @@ ruff                           # Fast Python linter and formatter
 ragas                       # RAG-specific evaluation metrics (Faithfulness, Relevancy, Recall)
 deepeval                    # Pytest-compatible test runner wrapping RAGAS & safety metrics
 langfuse                    # Live production monitoring, tracing & user feedback collection
+pandas
+openai
 
 # --- EMBEDDINGS (SENTENCE TRANSFORMERS) ---
 sentence-transformers       # Local fallback embeddings (mxbai-embed-large-v1)
